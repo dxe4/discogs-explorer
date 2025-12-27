@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Discogs Artist Map</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0a0a0a;
+            --sidebar-bg: #121212;
+            --accent-color: #1db954;
+            --text-main: #ffffff;
+            --text-dim: #b3b3b3;
+            --border-color: #282828;
+            --input-bg: #2a2a2a;
+        }
+        body { 
+            margin: 0; 
+            background: var(--bg-color); 
+            color: var(--text-main); 
+            font-family: 'Inter', sans-serif; 
+            overflow: hidden; 
+        }
+        #container { display: flex; width: 100vw; height: 100vh; position: relative; }
+        #map-container { flex: 1; position: relative; cursor: crosshair; overflow: hidden; }
+        canvas { position: absolute; top: 0; left: 0; }
+        #interaction-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+        
+        #sidebar { 
+            width: 400px; 
+            background: var(--sidebar-bg); 
+            border-left: 1px solid var(--border-color); 
+            padding: 0; 
+            overflow-y: auto; 
+            display: block; 
+            z-index: 100;
+            box-shadow: -5px 0 15px rgba(0,0,0,0.5);
+            flex-shrink: 0;
+        }
+        .sidebar-content { padding: 30px; }
+        .sidebar-header { 
+            height: 200px; 
+            background: linear-gradient(to bottom, #333, var(--sidebar-bg));
+            display: flex;
+            align-items: flex-end;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        h2 { margin: 0; color: white; font-size: 2.5em; font-weight: 900; line-height: 1.1; }
+        .meta { color: var(--accent-color); font-size: 0.9em; font-weight: 700; margin-bottom: 15px; text-transform: uppercase; letter-spacing: 1.5px; }
+        .profile { font-size: 1em; line-height: 1.6; margin-bottom: 30px; color: var(--text-dim); font-weight: 300; }
+        
+        .video-container h3 { font-size: 1.2em; margin-bottom: 20px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
+        iframe { width: 100%; border: none; margin-bottom: 20px; border-radius: 12px; background: #000; box-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+        
+        /* Legend moved to sidebar */
+        .legend-section { margin-top: 40px; border-top: 1px solid var(--border-color); padding-top: 20px; }
+        .legend-title { font-weight: 700; margin-bottom: 15px; font-size: 0.8em; text-transform: uppercase; color: var(--text-dim); }
+        .legend-item { display: flex; align-items: center; margin-bottom: 10px; font-size: 12px; cursor: pointer; transition: color 0.2s; }
+        .legend-item:hover { color: var(--accent-color); }
+        .legend-color { width: 10px; height: 10px; border-radius: 50%; margin-right: 12px; flex-shrink: 0; }
+        
+        #loading { 
+            position: absolute; 
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: var(--bg-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000; 
+        }
+        .loader-text { font-size: 24px; font-weight: 700; margin-bottom: 20px; letter-spacing: -0.5px; }
+        .progress-bar { width: 300px; height: 4px; background: #222; border-radius: 2px; overflow: hidden; }
+        .progress-fill { width: 0%; height: 100%; background: var(--accent-color); transition: width 0.3s; }
+        
+        #tooltip { 
+            position: absolute; 
+            background: rgba(255, 255, 255, 0.95); 
+            color: #000; 
+            padding: 10px 15px; 
+            border-radius: 8px; 
+            pointer-events: none; 
+            display: none; 
+            font-size: 14px; 
+            font-weight: 600;
+            z-index: 300; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+        }
+
+        .controls {
+            position: absolute;
+            top: 30px;
+            left: 30px;
+            z-index: 50;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: rgba(18, 18, 18, 0.8);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 15px;
+            backdrop-filter: blur(10px);
+            width: 300px;
+        }
+        .search-input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .search-box {
+            background: var(--input-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px 15px;
+            color: white;
+            outline: none;
+            font-family: inherit;
+            font-size: 14px;
+        }
+        .search-box:focus {
+            border-color: var(--accent-color);
+        }
+        .search-options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            font-size: 11px;
+            color: var(--text-dim);
+            margin-top: 5px;
+        }
+        .search-option {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+        }
+        .search-option input {
+            cursor: pointer;
+            accent-color: var(--accent-color);
+        }
+        .search-results {
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 10px;
+            border-top: 1px solid var(--border-color);
+            display: none;
+        }
+        .result-item {
+            padding: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            border-bottom: 1px solid #222;
+        }
+        .result-item:hover { background: rgba(255,255,255,0.05); }
+        .result-meta { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+        .selection-btn {
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 10px;
+            font-weight: 700;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: all 0.2s;
+            font-family: inherit;
+            font-size: 13px;
+        }
+        .selection-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+        .selection-btn.active { background: #ff4444; }
+
+        .playlist-section {
+            margin-top: 30px;
+            border-top: 1px solid var(--border-color);
+            padding-top: 20px;
+            display: none;
+        }
+        .playlist-item {
+            display: flex;
+            flex-direction: column;
+            padding: 8px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .playlist-item:hover { background: rgba(255,255,255,0.05); }
+        .playlist-item .p-name { font-weight: 600; }
+        .playlist-item .p-meta { font-size: 11px; color: var(--text-dim); }
+        .playlist-links { display: flex; gap: 10px; margin-top: 5px; }
+        .playlist-link { font-size: 10px; color: var(--accent-color); text-decoration: none; opacity: 0.7; }
+        .playlist-link:hover { opacity: 1; }
+        .playlist-instructions { font-size: 12px; color: var(--text-dim); margin-bottom: 15px; line-height: 1.4; font-style: italic; }
+
+        .playlist-player {
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 20px;
+            display: none;
+            border: 1px solid var(--border-color);
+        }
+        .player-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            background: #1a1a1a;
+            font-size: 12px;
+        }
+        .player-btn {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            font-weight: 700;
+            padding: 5px 10px;
+            border-radius: 4px;
+        }
+        .player-btn:hover { background: rgba(255,255,255,0.1); }
+        .player-info {
+            flex-grow: 1;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin: 0 10px;
+        }
+
+        .empty-state {
+            padding: 40px 20px;
+            text-align: center;
+            color: var(--text-dim);
+        }
+        .empty-state h3 {
+            color: white;
+            margin-bottom: 10px;
+        }
+        .empty-state p {
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .instruction-icon {
+            font-size: 40px;
+            margin-bottom: 20px;
+            display: block;
+            opacity: 0.5;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <div class="loader-text">Mapping the Musical Universe</div>
+        <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
+    </div>
+    <div id="tooltip"></div>
+    
+    <div class="controls">
+        <div class="search-input-group">
+            <input type="text" class="search-box" id="search" placeholder="Search the universe...">
+            <div class="search-options">
+                <label class="search-option"><input type="checkbox" id="search-name" checked> Name</label>
+                <label class="search-option"><input type="checkbox" id="search-genre" checked> Genre</label>
+                <label class="search-option"><input type="checkbox" id="search-style" checked> Style</label>
+                <label class="search-option"><input type="checkbox" id="search-profile"> Profile</label>
+            </div>
+        </div>
+        <button id="selection-mode" class="selection-btn">Draw Rectangle to Create Playlist</button>
+        <div id="search-results" class="search-results"></div>
+    </div>
+
+    <div id="container">
+        <div id="map-container">
+            <canvas id="map-canvas"></canvas>
+            <div id="interaction-layer"></div>
+        </div>
+        <div id="sidebar">
+            <div class="sidebar-header" id="sidebar-header" style="display: none;">
+                <h2 id="artist-name">Select an Artist</h2>
+            </div>
+            <div class="sidebar-content">
+                <div id="artist-details" style="display: none;">
+                    <div class="meta" id="artist-meta"></div>
+                    <div class="profile" id="artist-profile"></div>
+                    <div id="videos" class="video-container"></div>
+                </div>
+
+                <div id="sidebar-instructions" class="empty-state">
+                    <span class="instruction-icon">🔭</span>
+                    <h3>Explore the Universe</h3>
+                    <p>Click on any point in the map to view artist details, profiles, and featured videos.</p>
+                    <p style="margin-top: 15px; font-size: 12px;">Use the search box to filter by genre, style, or name.</p>
+                </div>
+
+                <div id="playlist-section" class="playlist-section">
+                    <div class="legend-title">Selection Playlist (100 Random)</div>
+                    
+                    <div id="playlist-player" class="playlist-player">
+                        <div id="player-iframe-container"></div>
+                        <div class="player-controls">
+                            <button class="player-btn" id="player-prev">PREV</button>
+                            <div class="player-info" id="player-artist-name">Artist Name</div>
+                            <button class="player-btn" id="player-next">NEXT</button>
+                        </div>
+                    </div>
+
+                    <div class="playlist-instructions">Click an artist to view details and zoom. Use the player above to listen through the selection.</div>
+                    <div id="playlist-items"></div>
+                </div>
+
+                <div class="empty-state" id="empty-state">
+                    <h3>Welcome to the Artist Map</h3>
+                    <p>Use the search bar to find artists, genres, or styles.</p>
+                    <p>Click on a point to explore artist connections.</p>
+                    <i class="instruction-icon">🎶</i>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('map-canvas');
+        const ctx = canvas.getContext('2d');
+        const interactionLayer = d3.select('#interaction-layer');
+        const tooltip = d3.select('#tooltip');
+        
+        let width, height, points, labels, bounds, transform = d3.zoomIdentity;
+        let zoom, brush, brushLayer;
+        let filteredPoints = null;
+
+        function resize() {
+            width = document.getElementById('map-container').clientWidth;
+            height = document.getElementById('map-container').clientHeight;
+            canvas.width = width * window.devicePixelRatio;
+            canvas.height = height * window.devicePixelRatio;
+            canvas.style.width = width + 'px';
+            canvas.style.height = height + 'px';
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+            
+            if (brush) brush.extent([[0, 0], [width, height]]);
+            if (brushLayer) brushLayer.attr("width", width).attr("height", height);
+            
+            draw();
+        }
+
+        window.addEventListener('resize', resize);
+
+        fetch("artist_data.json").then(response => {
+            if (!response.ok) throw new Error(`Failed to load data: ${response.statusText}`);
+            const reader = response.body.getReader();
+            const contentLength = +response.headers.get('Content-Length');
+            let receivedLength = 0;
+            let chunks = [];
+            return new Promise((resolve, reject) => {
+                function read() {
+                    reader.read().then(({done, value}) => {
+                        if (done) {
+                            let chunksAll = new Uint8Array(receivedLength);
+                            let position = 0;
+                            for(let chunk of chunks) { chunksAll.set(chunk, position); position += chunk.length; }
+                            resolve(new TextDecoder("utf-8").decode(chunksAll));
+                            return;
+                        }
+                        chunks.push(value);
+                        receivedLength += value.length;
+                        if (contentLength) {
+                            document.getElementById('progress').style.width = (receivedLength / contentLength * 100) + '%';
+                        }
+                        read();
+                    }).catch(reject);
+                }
+                read();
+            });
+        }).then(jsonText => {
+            const fullData = JSON.parse(jsonText);
+            points = fullData.points;
+            labels = fullData.labels;
+            bounds = fullData.bounds;
+            
+            // Sort points by album count (c) so larger artists are drawn last (on top)
+            points.sort((a, b) => a.c - b.c);
+            
+            resize();
+            
+            d3.select("#loading").style("transition", "opacity 0.5s").style("opacity", "0");
+            setTimeout(() => d3.select("#loading").remove(), 500);
+            
+            const legendContainer = d3.select("#legend-items");
+            labels.slice(0, 50).forEach(l => {
+                const item = legendContainer.append("div").attr("class", "legend-item");
+                item.append("div").attr("class", "legend-color").style("background", l.color);
+                item.append("span").text(l.cluster_label);
+                item.on("click", () => {
+                    interactionLayer.transition().duration(1000).call(
+                        zoom.transform, 
+                        d3.zoomIdentity.translate(width/2, height/2).scale(20).translate(-l.x, -l.y)
+                    );
+                });
+            });
+
+            zoom = d3.zoom()
+                .scaleExtent([0.1, 5000])
+                .on("zoom", (event) => {
+                    transform = event.transform;
+                    draw();
+                });
+
+            interactionLayer.call(zoom);
+            
+            const dataWidth = bounds[1] - bounds[0];
+            const dataHeight = bounds[3] - bounds[2];
+            const scale = Math.min(width / dataWidth, height / dataHeight) * 0.9;
+            
+            const initialTransform = d3.zoomIdentity
+                .translate(width / 2, height / 2)
+                .scale(scale)
+                .translate(-(bounds[0] + bounds[1]) / 2, -(bounds[2] + bounds[3]) / 2);
+
+            interactionLayer.call(zoom.transform, initialTransform);
+
+            // Selection Rectangle & Playlist Logic
+            let isSelectionMode = false;
+            brush = d3.brush()
+                .extent([[0, 0], [width, height]])
+                .on("end", brushed);
+
+            brushLayer = interactionLayer.append("svg")
+                .attr("width", width)
+                .attr("height", height)
+                .style("position", "absolute")
+                .style("top", 0)
+                .style("left", 0)
+                .style("pointer-events", "none")
+                .attr("id", "brush-layer");
+
+            document.getElementById('selection-mode').addEventListener('click', function() {
+                isSelectionMode = !isSelectionMode;
+                this.classList.toggle('active');
+                this.textContent = isSelectionMode ? 'Cancel Selection' : 'Draw Rectangle to Create Playlist';
+                
+                if (isSelectionMode) {
+                    brushLayer.style("pointer-events", "all").call(brush);
+                    interactionLayer.on(".zoom", null); // Disable zoom
+                } else {
+                    brushLayer.style("pointer-events", "none").selectAll("*").remove();
+                    interactionLayer.call(zoom); // Re-enable zoom
+                }
+            });
+
+            function brushed(event) {
+                if (!event.selection) return;
+                const [[x0, y0], [x1, y1]] = event.selection;
+                
+                // Convert screen coordinates to data coordinates
+                const p0 = transform.invert([x0, y0]);
+                const p1 = transform.invert([x1, y1]);
+                
+                const xMin = Math.min(p0[0], p1[0]);
+                const xMax = Math.max(p0[0], p1[0]);
+                const yMin = Math.min(p0[1], p1[1]);
+                const yMax = Math.max(p0[1], p1[1]);
+
+                const selected = points.filter(d => 
+                    d.x >= xMin && d.x <= xMax &&
+                    d.y >= yMin && d.y <= yMax
+                );
+
+                if (selected.length > 0) {
+                    // Pick 100 random
+                    const shuffled = [...selected].sort(() => 0.5 - Math.random());
+                    const playlist = shuffled.slice(0, 100);
+                    showPlaylist(playlist);
+                }
+                
+                // Reset selection mode after drawing
+                isSelectionMode = false;
+                const btn = document.getElementById('selection-mode');
+                btn.classList.remove('active');
+                btn.textContent = 'Draw Rectangle to Create Playlist';
+                brushLayer.style("pointer-events", "none").selectAll("*").remove();
+                interactionLayer.call(zoom);
+            }
+
+            let currentPlaylist = [];
+            let currentPlayerIndex = 0;
+            let ytPlayer = null;
+
+            function showPlaylist(playlist) {
+                currentPlaylist = playlist.filter(d => d.v && d.v.length > 0);
+                currentPlayerIndex = 0;
+
+                d3.select("#sidebar-instructions").style("display", "none");
+                d3.select("#empty-state").style("display", "none");
+                d3.select("#playlist-section").style("display", "block");
+                
+                if (currentPlaylist.length > 0) {
+                    d3.select("#playlist-player").style("display", "block");
+                    playTrack(0);
+                } else {
+                    d3.select("#playlist-player").style("display", "none");
+                }
+
+                const container = d3.select("#playlist-items").html("");
+                
+                playlist.forEach((d, idx) => {
+                    const item = container.append("div").attr("class", "playlist-item");
+                    item.append("div").attr("class", "p-name").text(d.n);
+                    item.append("div").attr("class", "p-meta").text(`${d.g} • ${d.s}`);
+                    
+                    if (d.v && d.v.length > 0) {
+                        const links = item.append("div").attr("class", "playlist-links");
+                        d.v.slice(0, 3).forEach((url, i) => {
+                            links.append("a")
+                                .attr("href", url)
+                                .attr("target", "_blank")
+                                .attr("class", "playlist-link")
+                                .text(`Video ${i + 1}`)
+                                .on("click", (e) => e.stopPropagation());
+                        });
+                    }
+
+                    item.on("click", () => {
+                        showArtist(d);
+                        interactionLayer.transition().duration(1000).call(
+                            zoom.transform, 
+                            d3.zoomIdentity.translate(width/2, height/2).scale(100).translate(-d.x, -d.y)
+                        );
+                        
+                        // If this artist is in the playable playlist, jump to it
+                        const pIdx = currentPlaylist.findIndex(p => p.i === d.i);
+                        if (pIdx !== -1) playTrack(pIdx);
+                    });
+                });
+            }
+
+            function playTrack(index) {
+                if (index < 0 || index >= currentPlaylist.length) return;
+                currentPlayerIndex = index;
+                const artist = currentPlaylist[index];
+                
+                d3.select("#player-artist-name").text(artist.n);
+                
+                const videoUri = artist.v[0];
+                let videoId = "";
+                if (videoUri.includes("youtube.com/watch?v=")) {
+                    videoId = videoUri.split("v=")[1].split("&")[0];
+                } else if (videoUri.includes("youtu.be/")) {
+                    videoId = videoUri.split("youtu.be/")[1].split("?")[0];
+                }
+
+                if (!ytPlayer) {
+                    d3.select("#player-iframe-container").html("<div id='yt-player-element'></div>");
+                    ytPlayer = new YT.Player('yt-player-element', {
+                        height: '200',
+                        width: '100%',
+                        videoId: videoId,
+                        playerVars: { 'autoplay': 1, 'enablejsapi': 1 },
+                        events: {
+                            'onStateChange': onPlayerStateChange
+                        }
+                    });
+                } else {
+                    ytPlayer.loadVideoById(videoId);
+                }
+            }
+
+            function onPlayerStateChange(event) {
+                if (event.data === YT.PlayerState.ENDED) {
+                    if (currentPlayerIndex < currentPlaylist.length - 1) {
+                        playTrack(currentPlayerIndex + 1);
+                    }
+                }
+            }
+
+            document.getElementById('player-prev').addEventListener('click', () => {
+                if (currentPlayerIndex > 0) playTrack(currentPlayerIndex - 1);
+            });
+
+            document.getElementById('player-next').addEventListener('click', () => {
+                if (currentPlayerIndex < currentPlaylist.length - 1) playTrack(currentPlayerIndex + 1);
+            });
+
+            // Advanced Search & Filtering
+            const searchInput = document.getElementById('search');
+            const resultsDiv = d3.select("#search-results");
+
+            searchInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    const term = this.value.toLowerCase();
+                    
+                    if (term.length === 0) {
+                        filteredPoints = null;
+                        resultsDiv.style("display", "none");
+                        draw();
+                        return;
+                    }
+
+                    const useName = document.getElementById('search-name').checked;
+                    const useGenre = document.getElementById('search-genre').checked;
+                    const useStyle = document.getElementById('search-style').checked;
+                    const useProfile = document.getElementById('search-profile').checked;
+
+                    // Filter points for visual highlighting
+                    filteredPoints = points.filter(d => {
+                        if (useName && d.n.toLowerCase().includes(term)) return true;
+                        if (useGenre && d.g.toLowerCase().includes(term)) return true;
+                        if (useStyle && d.s.toLowerCase().includes(term)) return true;
+                        if (useProfile && d.p.toLowerCase().includes(term)) return true;
+                        return false;
+                    });
+
+                    // Show top results in dropdown
+                    const matches = filteredPoints.slice(0, 50);
+                    if (matches.length > 0) {
+                        resultsDiv.style("display", "block").html("");
+                        matches.forEach(m => {
+                            const item = resultsDiv.append("div").attr("class", "result-item");
+                            item.append("div").text(m.n);
+                            item.append("div").attr("class", "result-meta").text(`${m.g} • ${m.s}`);
+                            item.on("click", () => {
+                                showArtist(m);
+                                interactionLayer.transition().duration(1000).call(
+                                    zoom.transform, 
+                                    d3.zoomIdentity.translate(width/2, height/2).scale(100).translate(-m.x, -m.y)
+                                );
+                                resultsDiv.style("display", "none");
+                            });
+                        });
+                        
+                        // Zoom to the first match if we aren't already zoomed in
+                        if (transform.k < 5) {
+                            const m = matches[0];
+                            interactionLayer.transition().duration(1000).call(
+                                zoom.transform, 
+                                d3.zoomIdentity.translate(width/2, height/2).scale(20).translate(-m.x, -m.y)
+                            );
+                        }
+                    } else {
+                        resultsDiv.style("display", "block").html("<div class='result-item'>No matches found</div>");
+                    }
+                    
+                    draw(); // Redraw with filtering
+                }
+            });
+
+            interactionLayer.on('mousemove', (event) => {
+                const [mx, my] = d3.pointer(event);
+                const [px, py] = transform.invert([mx, my]);
+                let closest = null;
+                let minDist = 5 / transform.k;
+                
+                const pointsToSearch = filteredPoints || points;
+
+                if (transform.k > 20) {
+                    for (let i = 0; i < pointsToSearch.length; i++) {
+                        const d = pointsToSearch[i];
+                        const dx = d.x - px;
+                        const dy = d.y - py;
+                        const dist = Math.sqrt(dx*dx + dy*dy);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            closest = d;
+                        }
+                    }
+                }
+
+                if (closest) {
+                    tooltip.style('display', 'block')
+                        .style('left', (mx + 15) + 'px')
+                        .style('top', (my - 15) + 'px')
+                        .html(`<b>${closest.n}</b><br>${closest.g} - ${closest.s}`);
+                } else {
+                    tooltip.style('display', 'none');
+                }
+            }).on('click', (event) => {
+                const [mx, my] = d3.pointer(event);
+                const [px, py] = transform.invert([mx, my]);
+                let closest = null;
+                let minDist = 10 / transform.k;
+                
+                const pointsToSearch = filteredPoints || points;
+
+                for (let i = 0; i < pointsToSearch.length; i++) {
+                    const d = pointsToSearch[i];
+                    const dx = d.x - px;
+                    const dy = d.y - py;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        closest = d;
+                    }
+                }
+                if (closest) showArtist(closest);
+            });
+        });
+
+        function draw() {
+            if (!points || !ctx) return;
+            ctx.clearRect(0, 0, width, height);
+            
+            ctx.save();
+            ctx.translate(transform.x, transform.y);
+            ctx.scale(transform.k, transform.k);
+            
+            const pointsToDraw = filteredPoints || points;
+            
+            // Divide points into size tiers to ensure large artists are drawn on top
+            // while still allowing batching by color within each tier for performance.
+            const tiers = [[], [], [], []];
+            pointsToDraw.forEach(d => {
+                const screenX = d.x * transform.k + transform.x;
+                const screenY = d.y * transform.k + transform.y;
+                if (screenX < -20 || screenX > width + 20 || screenY < -20 || screenY > height + 20) return;
+                
+                if (d.c > 100) tiers[3].push(d);      // Very Large
+                else if (d.c > 20) tiers[2].push(d);  // Large
+                else if (d.c > 5) tiers[1].push(d);   // Medium
+                else tiers[0].push(d);                // Small
+            });
+
+            const basePointSize = Math.max(0.005, 0.08 / Math.sqrt(transform.k));
+            
+            tiers.forEach(tierPoints => {
+                if (tierPoints.length === 0) return;
+                
+                const batches = {};
+                tierPoints.forEach(d => {
+                    if (!batches[d.cl]) batches[d.cl] = [];
+                    batches[d.cl].push(d);
+                });
+
+                Object.keys(batches).forEach(color => {
+                    ctx.fillStyle = color;
+                    ctx.globalAlpha = filteredPoints ? 0.9 : 0.6;
+                    ctx.beginPath();
+                    batches[color].forEach(d => {
+                        // Subtle scaling for a very fine-grained look
+                        const size = basePointSize * (1 + Math.sqrt(d.c) * 0.2) * (filteredPoints ? 1.5 : 1);
+                        ctx.moveTo(d.x + size, d.y);
+                        ctx.arc(d.x, d.y, size, 0, 2 * Math.PI);
+                    });
+                    ctx.fill();
+                });
+            });
+            
+            ctx.restore();
+
+            if (labels && !filteredPoints) {
+                const occupied = [];
+                const padding = 5; 
+                labels.forEach(l => {
+                    const screenX = l.x * transform.k + transform.x;
+                    const screenY = l.y * transform.k + transform.y;
+                    if (screenX < 20 || screenX > width - 20 || screenY < 20 || screenY > height - 20) return;
+
+                    const clusterSizeFactor = Math.pow(l.count, 0.25);
+                    let pixelSize = 6 * clusterSizeFactor; 
+                    const zoomFactor = Math.min(2.0, Math.max(0.5, transform.k / 100));
+                    pixelSize *= zoomFactor;
+                    pixelSize = Math.max(10, Math.min(24, pixelSize));
+
+                    const textWidth = l.cluster_label.length * (pixelSize * 0.5);
+                    const textHeight = pixelSize;
+                    const rect = {
+                        x1: screenX - textWidth/2 - padding,
+                        y1: screenY - textHeight/2 - padding,
+                        x2: screenX + textWidth/2 + padding,
+                        y2: screenY + textHeight/2 + padding
+                    };
+
+                    const collision = occupied.some(r => !(rect.x2 < r.x1 || rect.x1 > r.x2 || rect.y2 < r.y1 || rect.y1 > r.y2));
+
+                    if (!collision) {
+                        occupied.push(rect);
+                        ctx.globalAlpha = Math.min(1.0, Math.max(0, (transform.k - 10) / 20));
+                        if (ctx.globalAlpha <= 0) return;
+                        ctx.font = `900 ${pixelSize}px 'Inter'`;
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.strokeStyle = 'rgba(10, 10, 10, 0.9)';
+                        ctx.lineWidth = 4;
+                        ctx.strokeText(l.cluster_label, screenX, screenY);
+                        ctx.fillStyle = l.color;
+                        ctx.fillText(l.cluster_label, screenX, screenY);
+                    }
+                });
+            }
+        }
+
+        function showArtist(d) {
+            d3.select("#sidebar-instructions").style("display", "none");
+            d3.select("#empty-state").style("display", "none");
+            d3.select("#sidebar-header").style("display", "flex");
+            d3.select("#artist-details").style("display", "block");
+            
+            d3.select("#artist-name").text(d.n);
+            d3.select("#artist-meta").text(`${d.g} • ${d.s} • ${d.c} Albums`);
+            d3.select("#artist-profile").html(d.p + (d.p.length >= 400 ? '...' : ''));
+            d3.select("#sidebar-header").style("background", `linear-gradient(to bottom, ${d.cl}, var(--sidebar-bg))`);
+
+            const videoDiv = d3.select("#videos").html("");
+            if (d.v && d.v.length > 0) {
+                videoDiv.append("h3").text("Featured Videos");
+                d.v.forEach(uri => {
+                    let embedUrl = uri;
+                    if (uri.includes("youtube.com/watch?v=")) {
+                        const id = uri.split("v=")[1].split("&")[0];
+                        embedUrl = `https://www.youtube.com/embed/${id}`;
+                    } else if (uri.includes("youtu.be/")) {
+                        const id = uri.split("youtu.be/")[1].split("?")[0];
+                        embedUrl = `https://www.youtube.com/embed/${id}`;
+                    }
+                    if (embedUrl.includes("youtube.com/embed/")) {
+                        videoDiv.append("iframe")
+                            .attr("src", embedUrl)
+                            .attr("height", "220")
+                            .attr("allow", "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture")
+                            .attr("allowfullscreen", true);
+                    }
+                });
+            }
+        }
+    </script>
+</body>
+</html>
